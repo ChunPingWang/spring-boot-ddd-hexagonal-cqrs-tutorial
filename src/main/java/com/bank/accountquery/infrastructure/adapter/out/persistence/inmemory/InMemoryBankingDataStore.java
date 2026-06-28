@@ -101,4 +101,34 @@ public class InMemoryBankingDataStore {
     Map<AccountId, Account> accounts()                  { return accounts; }
     Map<AccountId, List<Transaction>> transactions()    { return transactions; }
     Map<PrivilegeId, TransferPrivilege> privileges()    { return privileges; }
+
+    // ── 寫入操作（供 BDD 情境測試於每個情境前自行佈置資料；亦可供未來 Command 側使用）──
+    public void reset() {
+        accounts.clear();
+        transactions.clear();
+        privileges.clear();
+    }
+
+    public void addAccount(Account account) {
+        accounts.put(account.getAccountId(), account);
+    }
+
+    public void putTransactions(AccountId accountId, List<Transaction> txs) {
+        transactions.put(accountId, List.copyOf(txs));
+    }
+
+    public void addPrivilege(TransferPrivilege privilege) {
+        privileges.put(privilege.getPrivilegeId(), privilege);
+    }
+
+    /** 為既有優惠附加使用紀錄（TransferPrivilege 不可變，故以相同欄位重建）。 */
+    public void replaceUsageRecords(PrivilegeId privilegeId, List<PrivilegeUsageRecord> records) {
+        TransferPrivilege p = privileges.get(privilegeId);
+        if (p == null) {
+            throw new IllegalStateException("優惠不存在，無法附加使用紀錄：" + privilegeId.value());
+        }
+        privileges.put(privilegeId, new TransferPrivilege(
+            p.getPrivilegeId(), p.getOwnerId(), p.getType(),
+            p.getTotalQuota(), p.getUsedQuota(), p.getValidPeriod(), records));
+    }
 }

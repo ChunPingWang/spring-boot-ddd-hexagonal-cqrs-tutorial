@@ -27,6 +27,13 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test") // JUnit 5 + Mockito + AssertJ
     testImplementation("org.springframework.boot:spring-boot-webmvc-test")  // @WebMvcTest slice (Spring Boot 4 module)
     testImplementation("com.jayway.jsonpath:json-path")
+
+    // ── BDD：Cucumber 7 + Gherkin（端對端情境測試）──────────────────────
+    testImplementation(platform("io.cucumber:cucumber-bom:7.34.4"))
+    testImplementation("io.cucumber:cucumber-java")
+    testImplementation("io.cucumber:cucumber-spring")
+    testImplementation("io.cucumber:cucumber-junit-platform-engine")
+    testImplementation("org.junit.platform:junit-platform-suite")
 }
 
 tasks.withType<Test> {
