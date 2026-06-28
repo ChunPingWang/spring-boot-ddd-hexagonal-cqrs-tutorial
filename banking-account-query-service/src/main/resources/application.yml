@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: banking-account-query-service
+  threads:
+    virtual:
+      enabled: true   # Java 21+ Virtual Threads (Project Loom) for high-concurrency I/O
+
+server:
+  port: 8080

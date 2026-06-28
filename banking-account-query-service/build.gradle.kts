@@ -1,0 +1,34 @@
+plugins {
+    java
+    id("org.springframework.boot") version "4.0.7"
+    id("io.spring.dependency-management") version "1.1.7"
+}
+
+group = "com.bank"
+version = "0.0.1-SNAPSHOT"
+
+java {
+    // Tutorial targets Java 23; this environment runs Java 25 (a superset).
+    // All language features used (records, pattern matching, text blocks) are available in both.
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // ── Spring Boot (Driving Adapter — REST) ──────────────────────────
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+
+    // ── Test ──────────────────────────────────────────────────────────
+    testImplementation("org.springframework.boot:spring-boot-starter-test") // JUnit 5 + Mockito + AssertJ
+    testImplementation("org.springframework.boot:spring-boot-webmvc-test")  // @WebMvcTest slice (Spring Boot 4 module)
+    testImplementation("com.jayway.jsonpath:json-path")
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
+}
