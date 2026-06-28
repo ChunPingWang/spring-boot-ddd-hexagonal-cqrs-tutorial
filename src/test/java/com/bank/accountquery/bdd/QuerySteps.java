@@ -48,6 +48,16 @@ public class QuerySteps {
             .formatted(privilegeId, start, end), true);
     }
 
+    @When("客戶使用優惠 {string} 一次 節省 {string} 轉帳至 {string}")
+    public void usePrivilege(String privilegeId, String savedAmount, String targetAccountNo) {
+        String body = "{\"targetAccountNo\":\"%s\",\"savedAmount\":%s}".formatted(targetAccountNo, savedAmount);
+        ApiClient.Response resp = api.post(
+            "/api/v1/customers/me/privileges/transfer/%s/use".formatted(privilegeId),
+            body, context.customerId);
+        context.statusCode = resp.status();
+        context.body = resp.body();
+    }
+
     private void get(String path, boolean authenticate) {
         String customerId = authenticate ? context.customerId : null;
         ApiClient.Response resp = api.get(path, customerId);

@@ -5,13 +5,17 @@ import com.bank.accountquery.domain.exception.AccountNotActiveException;
 import com.bank.accountquery.domain.exception.AccountNotFoundException;
 import com.bank.accountquery.domain.exception.AccountNotOwnedByCustomerException;
 import com.bank.accountquery.domain.exception.InvalidAccountIdFormatException;
+import com.bank.accountquery.domain.exception.PrivilegeExpiredException;
 import com.bank.accountquery.domain.exception.PrivilegeNotFoundException;
 import com.bank.accountquery.domain.exception.PrivilegeNotOwnedByCustomerException;
+import com.bank.accountquery.domain.exception.PrivilegeQuotaExhaustedException;
 import com.bank.accountquery.domain.exception.QueryRangeExceededException;
 import com.bank.accountquery.domain.exception.UnsupportedCurrencyException;
 import com.bank.accountquery.infrastructure.adapter.in.rest.dto.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -63,6 +67,16 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.UNPROCESSABLE_ENTITY, "ACCOUNT_CURRENCY_MISMATCH", ex.getMessage());
     }
 
+    @ExceptionHandler(PrivilegeExpiredException.class)
+    public ResponseEntity<ApiResponse<Void>> handlePrivilegeExpired(PrivilegeExpiredException ex) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, "PRIVILEGE_EXPIRED", ex.getMessage());
+    }
+
+    @ExceptionHandler(PrivilegeQuotaExhaustedException.class)
+    public ResponseEntity<ApiResponse<Void>> handlePrivilegeQuotaExhausted(PrivilegeQuotaExhaustedException ex) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, "PRIVILEGE_QUOTA_EXHAUSTED", ex.getMessage());
+    }
+
     // ── 400 請求參數錯誤 ────────────────────────────────────────────
     @ExceptionHandler(UnsupportedCurrencyException.class)
     public ResponseEntity<ApiResponse<Void>> handleUnsupportedCurrency(UnsupportedCurrencyException ex) {
@@ -76,7 +90,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({IllegalArgumentException.class,
                        MissingServletRequestParameterException.class,
-                       MethodArgumentTypeMismatchException.class})
+                       MethodArgumentTypeMismatchException.class,
+                       MethodArgumentNotValidException.class,
+                       HttpMessageNotReadableException.class})
     public ResponseEntity<ApiResponse<Void>> handleBadRequest(Exception ex) {
         return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage());
     }

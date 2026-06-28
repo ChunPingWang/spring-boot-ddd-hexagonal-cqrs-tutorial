@@ -30,6 +30,19 @@ public final class PrivilegeTestFixture {
         );
     }
 
+    /** 有效期已結束的優惠（用於測試 use() 的有效期不變式）。 */
+    public static TransferPrivilege expiredPrivilege(int totalQuota, int usedQuota) {
+        return new TransferPrivilege(
+            PrivilegeId.of("P002"),
+            DEFAULT_OWNER,
+            PrivilegeType.FEE_FREE_INTERBANK_TRANSFER,
+            totalQuota,
+            usedQuota,
+            new DateRange(LocalDate.now().minusMonths(13), LocalDate.now().minusMonths(1)),
+            List.of()
+        );
+    }
+
     public static TransferPrivilege privilegeWithUsageRecords() {
         return new TransferPrivilege(
             PrivilegeId.of("P001"),

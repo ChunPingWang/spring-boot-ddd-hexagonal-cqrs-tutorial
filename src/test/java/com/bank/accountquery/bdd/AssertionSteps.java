@@ -94,6 +94,16 @@ public class AssertionSteps {
         assertThat(arraySize("$.data.records")).isEqualTo(expected);
     }
 
+    @Then("優惠使用結果剩餘次數為 {int}")
+    public void usedResultRemainingIs(int expected) {
+        assertThat(((Number) read("$.data.remainingQuota")).intValue()).isEqualTo(expected);
+    }
+
+    @Then("優惠使用結果已用次數為 {int}")
+    public void usedResultUsedIs(int expected) {
+        assertThat(((Number) read("$.data.usedQuota")).intValue()).isEqualTo(expected);
+    }
+
     @Then("總節省金額為 {string}")
     public void totalSavedIs(String expected) {
         assertNumericEquals("$.data.totalSaved", expected);

@@ -1,6 +1,7 @@
 package com.bank.accountquery.infrastructure.adapter.out.persistence.inmemory;
 
 import com.bank.accountquery.application.port.out.LoadPrivilegePort;
+import com.bank.accountquery.application.port.out.SavePrivilegePort;
 import com.bank.accountquery.domain.model.privilege.PrivilegeId;
 import com.bank.accountquery.domain.model.privilege.TransferPrivilege;
 import com.bank.accountquery.domain.model.shared.CustomerId;
@@ -9,10 +10,10 @@ import java.util.Optional;
 import org.springframework.stereotype.Repository;
 
 /**
- * Driven Adapter — 實作 LoadPrivilegePort（記憶體版）。
+ * Driven Adapter — 實作 LoadPrivilegePort 與 SavePrivilegePort（記憶體版）。
  */
 @Repository
-public class InMemoryPrivilegeAdapter implements LoadPrivilegePort {
+public class InMemoryPrivilegeAdapter implements LoadPrivilegePort, SavePrivilegePort {
 
     private final InMemoryBankingDataStore store;
 
@@ -30,5 +31,10 @@ public class InMemoryPrivilegeAdapter implements LoadPrivilegePort {
     @Override
     public Optional<TransferPrivilege> findByPrivilegeId(PrivilegeId privilegeId) {
         return Optional.ofNullable(store.privileges().get(privilegeId));
+    }
+
+    @Override
+    public void save(TransferPrivilege privilege) {
+        store.addPrivilege(privilege);
     }
 }

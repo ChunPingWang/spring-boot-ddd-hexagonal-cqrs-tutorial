@@ -24,8 +24,22 @@ public class ApiClient {
     public record Response(int status, String body) {}
 
     public Response get(String path, String customerId) {
+        return send(HttpRequest.newBuilder(uri(path)).GET(), customerId, path);
+    }
+
+    public Response post(String path, String jsonBody, String customerId) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(jsonBody));
+        return send(builder, customerId, path);
+    }
+
+    private URI uri(String path) {
         int port = Integer.parseInt(env.getProperty("local.server.port"));
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET();
+        return URI.create("http://localhost:" + port + path);
+    }
+
+    private Response send(HttpRequest.Builder builder, String customerId, String path) {
         if (customerId != null) {
             builder.header("X-Customer-Id", customerId);
         }
