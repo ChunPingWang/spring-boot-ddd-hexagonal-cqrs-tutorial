@@ -1,180 +1,176 @@
-# Banking Account Query Service
+# 銀行帳戶查詢服務 Banking Account Query Service
 
-A small, **runnable** banking "account query" API built to teach four ideas that usually only appear in dense
-architecture books:
+一個小而**可實際執行**的銀行「帳戶查詢」API，用來把通常只出現在艱澀架構書籍裡的四個概念講清楚：
 
-- **DDD (Domain-Driven Design)** — put business rules in the model, not scattered across the code.
-- **Hexagonal Architecture (Ports & Adapters)** — keep the core logic independent of the web, the database, and frameworks.
-- **CQRS (read side)** — treat "reading data" as its own well-defined path.
-- **TDD** — every rule is covered by a fast, readable test.
+- **DDD（領域驅動設計）** — 把業務規則放進模型裡，而不是散落在各處程式碼。
+- **Hexagonal Architecture（六角形架構／Ports & Adapters）** — 讓核心邏輯獨立於 Web、資料庫與框架之外。
+- **CQRS（讀取側）** — 把「讀取資料」視為一條獨立、定義明確的路徑。
+- **TDD** — 每一條規則都有快速、好讀的測試覆蓋。
 
-It implements a real feature set from [`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md): querying NTD/foreign-currency
-transactions and transfer-fee privileges, **for the logged-in customer only**.
+它實作了 [`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md) 裡的真實功能：查詢台幣／外幣交易紀錄與轉帳優惠，
+而且**只允許已登入的客戶查詢自己的資料**。
 
-> New to these terms? Jump to the [Glossary](#glossary) at the bottom — then come back. You don't need to know
-> them up front; the diagrams below explain themselves.
+> 對這些名詞陌生？先跳到最下面的[名詞解釋](#名詞解釋)，再回來看。你不需要事先全部弄懂——下面的圖會自己說話。
 
 ---
 
-## Table of contents
+## 目錄
 
-1. [Quick start](#1-quick-start)
-2. [The one rule that explains everything: the Dependency Rule](#2-the-one-rule-that-explains-everything-the-dependency-rule)
-3. [The three layers](#3-the-three-layers)
-4. [Architecture at a glance (diagram)](#4-architecture-at-a-glance-diagram)
-5. [Class diagram — the domain model](#5-class-diagram--the-domain-model)
-6. [Sequence diagram — what happens on one request](#6-sequence-diagram--what-happens-on-one-request)
-7. [ER diagram — how the data relates](#7-er-diagram--how-the-data-relates)
-8. [Design decisions explained](#8-design-decisions-explained)
-9. [The API](#9-the-api)
-10. [How errors become HTTP status codes](#10-how-errors-become-http-status-codes)
-11. [Testing strategy](#11-testing-strategy)
-12. [Where this differs from the tutorial](#12-where-this-differs-from-the-tutorial)
-13. [Glossary](#glossary)
+1. [快速開始](#1-快速開始)
+2. [一條解釋一切的規則：依賴方向規則](#2-一條解釋一切的規則依賴方向規則)
+3. [三個層次](#3-三個層次)
+4. [架構總覽（圖）](#4-架構總覽圖)
+5. [類別圖 — 領域模型](#5-類別圖--領域模型)
+6. [循序圖 — 一次請求發生了什麼](#6-循序圖--一次請求發生了什麼)
+7. [ER 圖 — 資料如何關聯](#7-er-圖--資料如何關聯)
+8. [設計決策說明](#8-設計決策說明)
+9. [API](#9-api)
+10. [錯誤如何轉換成 HTTP 狀態碼](#10-錯誤如何轉換成-http-狀態碼)
+11. [測試策略](#11-測試策略)
+12. [與 Tutorial 的差異](#12-與-tutorial-的差異)
+13. [名詞解釋](#名詞解釋)
 
 ---
 
-## 1. Quick start
+## 1. 快速開始
 
-**Prerequisites:** a JDK (Java 23 or newer — the project is configured for Java 25). You do **not** need to install
-Gradle, Docker, PostgreSQL, or Redis — the Gradle wrapper is included and the data is in-memory.
+**先決條件：** 一套 JDK（Java 23 以上——本專案設定為 Java 25）。你**不需要**安裝 Gradle、Docker、PostgreSQL 或 Redis
+——專案內含 Gradle wrapper，資料皆在記憶體中。
 
 ```bash
-# from the repository root
-./gradlew test       # run all 33 tests (should be green)
-./gradlew bootRun    # start the API on http://localhost:8080
+# 在 repo 根目錄執行
+./gradlew test       # 執行全部 33 個測試（應全綠）
+./gradlew bootRun    # 在 http://localhost:8080 啟動 API
 ```
 
-Then, in another terminal, try a request. Authentication is simulated with an `X-Customer-Id` header
-(see [§8](#8-design-decisions-explained) for why):
+接著開另一個終端機試打一個請求。身分認證以 `X-Customer-Id` Header 模擬（原因見[§8](#8-設計決策說明)）：
 
 ```bash
-# Customer C001 reads their own NTD account — succeeds
+# 客戶 C001 查詢自己的台幣帳戶 — 成功
 curl -H "X-Customer-Id: C001" \
   "http://localhost:8080/api/v1/accounts/00123456789012/transactions/twd?startDate=2025-01-01&endDate=2025-01-31"
 
-# C001 tries to read someone else's account — blocked by the domain model (HTTP 403)
+# C001 嘗試查詢別人的帳戶 — 被領域模型擋下（HTTP 403）
 curl -H "X-Customer-Id: C001" \
   "http://localhost:8080/api/v1/accounts/00999999999999/transactions/twd?startDate=2025-01-01&endDate=2025-01-31"
 ```
 
-Seeded demo data: customer **C001** owns NTD account `00123456789012` and USD account `00123456789013`, plus
-privileges `P001` (valid) and `P002` (expired). Account `00999999999999` and privilege `P999` belong to another customer.
+內建示範資料：客戶 **C001** 擁有台幣帳戶 `00123456789012` 與美元帳戶 `00123456789013`，以及優惠 `P001`（有效）與
+`P002`（已過期）。帳戶 `00999999999999` 與優惠 `P999` 屬於另一位客戶。
 
 ---
 
-## 2. The one rule that explains everything: the Dependency Rule
+## 2. 一條解釋一切的規則：依賴方向規則
 
-Almost every design choice here follows from a single rule:
+幾乎每一個設計選擇都源自這條規則：
 
-> **Source code dependencies only point inward.** The inner circle knows nothing about the outer circle.
+> **原始碼的依賴只能指向內層。** 內圈對外圈一無所知。
 
 ```mermaid
 flowchart LR
-    subgraph Infrastructure["Infrastructure Layer (outermost)"]
+    subgraph Infrastructure["基礎設施層 Infrastructure（最外層）"]
         direction TB
         REST["REST Controllers<br/>(Spring MVC)"]
-        DB["Persistence Adapters<br/>(in-memory / JPA)"]
+        DB["持久化 Adapters<br/>(記憶體 / JPA)"]
     end
-    subgraph Application["Application Layer (middle)"]
+    subgraph Application["應用層 Application（中間層）"]
         direction TB
         HANDLER["Query Handlers"]
-        PORTS["Ports (interfaces)"]
+        PORTS["Ports（介面）"]
     end
-    subgraph Domain["Domain Layer (innermost, pure)"]
+    subgraph Domain["領域層 Domain（最內層，純粹）"]
         direction TB
-        AGG["Aggregates + Value Objects<br/>(all business rules)"]
+        AGG["Aggregates + Value Objects<br/>（所有業務規則）"]
     end
 
-    REST -->|calls| HANDLER
-    HANDLER -->|uses| AGG
-    HANDLER -->|depends on| PORTS
-    DB -.implements.-> PORTS
-    DB -->|returns| AGG
+    REST -->|呼叫| HANDLER
+    HANDLER -->|使用| AGG
+    HANDLER -->|依賴| PORTS
+    DB -.實作.-> PORTS
+    DB -->|回傳| AGG
 
     style Domain fill:#e8f5e9,stroke:#2e7d32
     style Application fill:#e3f2fd,stroke:#1565c0
     style Infrastructure fill:#fff3e0,stroke:#e65100
 ```
 
-- **Domain** depends on *nothing* — no Spring, no JPA, no annotations. It's plain Java. That's what "pure" means.
-- **Application** depends only on Domain + interfaces it defines itself (the **Ports**).
-- **Infrastructure** depends on everything — it's the glue that wires the app to the real world.
+- **Domain** 不依賴任何東西——沒有 Spring、沒有 JPA、沒有任何 annotation。它是純 Java。這就是「純粹」的意思。
+- **Application** 只依賴 Domain，以及它自己定義的介面（也就是 **Port**）。
+- **Infrastructure** 依賴所有層——它是把應用程式接到真實世界的黏著劑。
 
-The arrow that surprises beginners: the database adapter (`DB`) points *up* into the Application's `PORTS`
-(the dashed "implements" arrow). The Application says *"I need something that can load an account"* by declaring an
-interface; Infrastructure provides the implementation. This is **Dependency Inversion**, and it's why the core never
-has to know whether data comes from PostgreSQL, Redis, or a `HashMap`.
+讓新手意外的那支箭頭：資料庫 Adapter（`DB`）往*上*指向 Application 的 `PORTS`（虛線「實作」箭頭）。Application 透過宣告一個介面
+說「我需要一個能載入帳戶的東西」；Infrastructure 提供實作。這就是**依賴反轉（Dependency Inversion）**，也正是為什麼核心永遠
+不必知道資料是來自 PostgreSQL、Redis 還是一個 `HashMap`。
 
 ---
 
-## 3. The three layers
+## 3. 三個層次
 
-Mapped to folders under `src/main/java/com/bank/accountquery/`:
+對應到 `src/main/java/com/bank/accountquery/` 底下的資料夾：
 
-| Layer | Folder | Responsibility | May depend on |
-|-------|--------|----------------|---------------|
-| **Domain** | `domain/` | Business rules + concepts (Account, Money, …) | nothing (pure Java) |
-| **Application** | `application/` | Orchestrate a use case; define Ports | Domain only |
-| **Infrastructure** | `infrastructure/` | HTTP, persistence, framework wiring | Application + Domain + Spring |
+| 層次 | 資料夾 | 職責 | 可依賴 |
+|------|--------|------|--------|
+| **Domain** | `domain/` | 業務規則與概念（Account、Money…） | 無（純 Java） |
+| **Application** | `application/` | 協調一個 Use Case；定義 Ports | 只有 Domain |
+| **Infrastructure** | `infrastructure/` | HTTP、持久化、框架接線 | Application + Domain + Spring |
 
 ```
 domain/
 ├── model/
-│   ├── shared/      Money, Currency, DateRange, CustomerId
-│   ├── account/     Account (aggregate), Transaction, TransactionHistory, …
-│   └── privilege/   TransferPrivilege (aggregate), PrivilegeUsageRecord, …
-└── exception/       AccountNotOwnedByCustomerException, QueryRangeExceededException, …
+│   ├── shared/      Money、Currency、DateRange、CustomerId
+│   ├── account/     Account（aggregate）、Transaction、TransactionHistory…
+│   └── privilege/   TransferPrivilege（aggregate）、PrivilegeUsageRecord…
+└── exception/       AccountNotOwnedByCustomerException、QueryRangeExceededException…
 
 application/
 ├── port/
-│   ├── in/          Use-case interfaces (what the app can do)
-│   └── out/         Load*Port interfaces (what the app needs) ← repository interfaces live HERE
+│   ├── in/          Use Case 介面（這個應用程式能做什麼）
+│   └── out/         Load*Port 介面（這個應用程式需要什麼）← Repository 介面放在這裡
 └── query/
-    ├── account/     Query objects + Handlers + result DTOs
-    ├── privilege/   Query objects + Handlers + result DTOs
-    └── common/      PageInfo, Pagination
+    ├── account/     Query 物件 + Handlers + 結果 DTO
+    ├── privilege/   Query 物件 + Handlers + 結果 DTO
+    └── common/      PageInfo、Pagination
 
 infrastructure/
 ├── adapter/
-│   ├── in/rest/     Controllers, GlobalExceptionHandler, ApiResponse, CurrentCustomer
-│   └── out/persistence/inmemory/   Adapters implementing the Load*Ports
+│   ├── in/rest/     Controllers、GlobalExceptionHandler、ApiResponse、CurrentCustomer
+│   └── out/persistence/inmemory/   實作 Load*Port 的 Adapters
 └── config/          WebConfig
 ```
 
 ---
 
-## 4. Architecture at a glance (diagram)
+## 4. 架構總覽（圖）
 
-The "hexagon": the application core in the middle, with **driving** adapters on the left (things that call us) and
-**driven** adapters on the right (things we call).
+「六角形」：應用核心在中央，左邊是**驅動端（driving）** Adapter（呼叫我們的東西），右邊是**被驅動端（driven）**
+Adapter（我們呼叫的東西）。
 
 ```mermaid
 flowchart LR
-    Client(["HTTP Client<br/>curl / app"])
+    Client(["HTTP 用戶端<br/>curl / app"])
 
-    subgraph Core["Application Core"]
+    subgraph Core["應用核心 Application Core"]
         direction TB
         InPort["«input port»<br/>GetTwdTransactionHistoryUseCase"]
         Handler["GetTwdTransactionHistoryHandler"]
         OutPort1["«output port»<br/>LoadAccountPort"]
         OutPort2["«output port»<br/>LoadTransactionPort"]
-        Domain["«domain»<br/>Account aggregate<br/>(business rules)"]
+        Domain["«domain»<br/>Account aggregate<br/>（業務規則）"]
         InPort --> Handler
         Handler --> Domain
         Handler --> OutPort1
         Handler --> OutPort2
     end
 
-    Controller["AccountController<br/>(driving adapter)"]
-    AccAdapter["InMemoryAccountAdapter<br/>(driven adapter)"]
-    TxAdapter["InMemoryTransactionAdapter<br/>(driven adapter)"]
+    Controller["AccountController<br/>（driving adapter）"]
+    AccAdapter["InMemoryAccountAdapter<br/>（driven adapter）"]
+    TxAdapter["InMemoryTransactionAdapter<br/>（driven adapter）"]
     Store[("InMemoryBankingDataStore")]
 
     Client -->|GET /transactions/twd| Controller
-    Controller -->|builds Query, calls| InPort
-    OutPort1 -. implemented by .-> AccAdapter
-    OutPort2 -. implemented by .-> TxAdapter
+    Controller -->|建立 Query 並呼叫| InPort
+    OutPort1 -. 由其實作 .-> AccAdapter
+    OutPort2 -. 由其實作 .-> TxAdapter
     AccAdapter --> Store
     TxAdapter --> Store
 
@@ -182,16 +178,15 @@ flowchart LR
     style Domain fill:#e8f5e9,stroke:#2e7d32
 ```
 
-Swap `InMemory*Adapter` for `*JpaAdapter` and **nothing in the core changes** — that's the payoff of programming to
-the ports.
+把 `InMemory*Adapter` 換成 `*JpaAdapter`，**核心完全不需要改動**——這就是「對 Port 寫程式」帶來的回報。
 
 ---
 
-## 5. Class diagram — the domain model
+## 5. 類別圖 — 領域模型
 
-The two **aggregates** (`Account`, `TransferPrivilege`) are the heart of the system. An aggregate is a cluster of
-objects treated as one unit, with a single **root** that guards all the rules. Notice the rules live *as methods on
-the model* (`verifyOwnership`, `ensureActive`, `filterByDateRange`, `isValid`), not in some "service" class.
+兩個 **aggregate**（`Account`、`TransferPrivilege`）是整個系統的核心。aggregate 是一群被當作單一單位看待的物件，由單一的
+**root** 守護所有規則。請注意規則是*以模型上的方法*存在（`verifyOwnership`、`ensureActive`、`filterByDateRange`、
+`isValid`），而不是放在某個「service」類別裡。
 
 ```mermaid
 classDiagram
@@ -272,22 +267,21 @@ classDiagram
     PrivilegeUsageRecord *-- Money : savedAmount
 ```
 
-**Why `Money`, `DateRange`, `CustomerId` are their own types** (rather than `BigDecimal`, two `LocalDate`s, and a
-`String`): they carry rules. `Money` refuses negative amounts and won't add two different currencies. `DateRange`
-refuses a start after an end and can answer `exceedsMonths(13)`. This is the antidote to *Primitive Obsession* — bugs
-get caught at construction time, everywhere, for free.
+**為什麼 `Money`、`DateRange`、`CustomerId` 要自成型別**（而不是直接用 `BigDecimal`、兩個 `LocalDate`、一個 `String`）：
+因為它們攜帶規則。`Money` 拒絕負數金額，也不會把兩種不同幣別相加。`DateRange` 拒絕起日晚於迄日，並能回答
+`exceedsMonths(13)`。這是治療*基本型別偏執（Primitive Obsession）*的解藥——bug 在建構當下、處處、免費地被攔下來。
 
 ---
 
-## 6. Sequence diagram — what happens on one request
+## 6. 循序圖 — 一次請求發生了什麼
 
-`GET /api/v1/accounts/{id}/transactions/twd`. Watch where each responsibility lives: the **Controller** only
-translates HTTP, the **Handler** only orchestrates, and the **Account** makes every business decision.
+`GET /api/v1/accounts/{id}/transactions/twd`。注意各個職責落在哪裡：**Controller** 只做 HTTP 轉換，**Handler** 只做協調，
+而每一個業務決策都由 **Account** 做出。
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client
+    actor Client as 用戶端
     participant C as AccountController<br/>(driving adapter)
     participant UC as GetTwdTransactionHistoryHandler<br/>(use case)
     participant AP as LoadAccountPort
@@ -296,39 +290,38 @@ sequenceDiagram
     participant R as TwdTransactionHistoryResult
 
     Client->>C: GET /transactions/twd + X-Customer-Id
-    C->>C: build CustomerId, AccountId, DateRange<br/>(invalid input → 400 here)
+    C->>C: 建立 CustomerId、AccountId、DateRange<br/>（參數不合法 → 此處 400）
     C->>UC: execute(query)
 
     UC->>AP: findByAccountId(accountId)
-    AP-->>UC: Account (or empty → 404)
+    AP-->>UC: Account（找不到 → 404）
 
     UC->>A: verifyOwnership(customerId)
-    Note right of A: not the owner →<br/>throws → 403
+    Note right of A: 非持有人 →<br/>拋例外 → 403
     UC->>A: ensureActive()
-    Note right of A: frozen/closed →<br/>throws → 422
+    Note right of A: 凍結/結清 →<br/>拋例外 → 422
 
     UC->>TP: findByAccountId(accountId, dateRange)
-    TP-->>UC: raw List~Transaction~
+    TP-->>UC: 原始 List~Transaction~
 
     UC->>A: filterByDateRange(transactions, dateRange)
-    Note right of A: range > 13 months →<br/>throws → 422
-    A-->>UC: TransactionHistory (filtered)
+    Note right of A: 區間 > 13 個月 →<br/>拋例外 → 422
+    A-->>UC: TransactionHistory（已過濾）
 
     UC->>R: from(history, page, size)
-    R-->>UC: result DTO
+    R-->>UC: 結果 DTO
     UC-->>C: result
     C-->>Client: 200 { code: SUCCESS, data: … }
 ```
 
-The thrown exceptions don't clutter the Controller with `if/else`. They bubble up to a single
-`GlobalExceptionHandler` that converts each one to the right HTTP status — see [§10](#10-how-errors-become-http-status-codes).
+被拋出的例外不會讓 Controller 充滿 `if/else`。它們往上冒泡到單一的 `GlobalExceptionHandler`，由它把每一種例外轉換成正確的
+HTTP 狀態碼——見[§10](#10-錯誤如何轉換成-http-狀態碼)。
 
 ---
 
-## 7. ER diagram — how the data relates
+## 7. ER 圖 — 資料如何關聯
 
-This service is read-only and ships with in-memory data, but the domain maps cleanly onto the relational schema the
-tutorial targets for PostgreSQL. Conceptually:
+本服務為唯讀，且內建記憶體資料，但其領域模型能乾淨地對應到 Tutorial 針對 PostgreSQL 所規劃的關聯式 schema。概念上：
 
 ```mermaid
 erDiagram
@@ -341,7 +334,7 @@ erDiagram
         string customer_id PK
     }
     ACCOUNT {
-        string account_id PK "14 digits"
+        string account_id PK "14 碼數字"
         string owner_id FK
         string account_type "TWD | FX"
         string currency "TWD | USD | JPY | EUR"
@@ -353,7 +346,7 @@ erDiagram
         string type "CREDIT | DEBIT"
         decimal amount
         string amount_currency
-        decimal twd_equivalent "nullable, FX only"
+        decimal twd_equivalent "可為空，僅外幣"
         datetime transaction_date
         string description
         string channel
@@ -376,144 +369,135 @@ erDiagram
     }
 ```
 
-Each box matches a domain type one-to-one (`ACCOUNT` ↔ `Account`, `TRANSACTION` ↔ `Transaction`, etc.). The two
-"`||--o{`" relationships from `ACCOUNT` and `TRANSFER_PRIVILEGE` are the **aggregate boundaries**: you always load and
-save a `TRANSACTION` *through* its `Account`, never on its own (see ADR-001 in the tutorial).
+每個方框都與一個領域型別一對一對應（`ACCOUNT` ↔ `Account`、`TRANSACTION` ↔ `Transaction` 等）。從 `ACCOUNT` 與
+`TRANSFER_PRIVILEGE` 出發的那兩條「`||--o{`」關係，就是 **aggregate 邊界**：你永遠是*透過* `Account` 來載入/儲存
+`TRANSACTION`，而不會單獨操作它（見 Tutorial 的 ADR-001）。
 
 ---
 
-## 8. Design decisions explained
+## 8. 設計決策說明
 
-**Business rules belong to the model.** Ownership checks, "is this account active?", "is the range ≤ 13 months?",
-"is this privilege still valid?" are all methods on `Account` / `TransferPrivilege`. The Handler is deliberately
-boring — it fetches, delegates, and maps. If you ever see an `if (account.getStatus() == FROZEN)` inside a Handler,
-that's a smell: the rule leaked out of the model.
+**業務規則屬於模型。** 所有權檢查、「這個帳戶是否啟用？」、「區間是否 ≤ 13 個月？」、「這個優惠是否仍有效？」都是
+`Account` / `TransferPrivilege` 上的方法。Handler 刻意保持無聊——它只負責取得、委派、轉換。如果你在 Handler 裡看到
+`if (account.getStatus() == FROZEN)`，那就是一個壞味道：規則從模型裡漏出去了。
 
-**Repository interfaces live in the Application layer, named after intent.** They're called `LoadAccountPort`,
-`LoadTransactionPort` — *verbs describing what the app needs*, not `AccountRepository` (which hints at a database).
-The Application declares the need; Infrastructure satisfies it. This keeps the Domain free of persistence concerns
-entirely (the Domain doesn't even define these interfaces).
+**Repository 介面放在 Application 層，並以意圖命名。** 它們叫做 `LoadAccountPort`、`LoadTransactionPort`——是*描述應用程式
+需要什麼的動詞*，而不是 `AccountRepository`（那會暗示資料庫）。Application 宣告需求；Infrastructure 滿足它。這讓 Domain
+完全不沾持久化的概念（Domain 甚至不定義這些介面）。
 
-**Reads are split for performance (CQRS read side).** A busy account can have tens of thousands of transactions.
-Loading them all just to read account status would be wasteful, so `LoadAccountPort` returns the account *without*
-transactions, and `LoadTransactionPort` fetches a date-bounded slice separately. The `Account` then applies the final
-business filter. This is "Option A" in the tutorial's ADR-002 — it keeps the rules in the domain while staying fast.
+**為了效能，讀取被拆開（CQRS 讀取側）。** 一個繁忙的帳戶可能有上萬筆交易。只為了讀帳戶狀態就把它們全部載入是浪費，因此
+`LoadAccountPort` 回傳*不含*交易的帳戶，再由 `LoadTransactionPort` 單獨抓取有日期界限的片段。接著由 `Account` 套用最終的業務
+過濾。這就是 Tutorial ADR-002 的「方案 A」——在把規則留在領域層的同時，仍保持快速。
 
-**Immutability everywhere.** Value objects and result DTOs are Java `record`s; `TransactionHistory` makes a defensive
-copy of its list. Immutable objects can't be corrupted after creation, which removes a whole category of bugs and
-makes the code safe under the virtual-thread concurrency this app enables.
+**處處不可變（Immutability）。** Value Object 與結果 DTO 都是 Java `record`；`TransactionHistory` 對它的清單做防禦性複製。
+不可變物件在建立之後無法被破壞，這消除了一整類 bug，也讓程式碼在本應用啟用的虛擬執行緒併發下保持安全。
 
-**One place to translate errors.** `GlobalExceptionHandler` (a Spring `@RestControllerAdvice`) is the *only* place
-that knows about HTTP status codes for business errors. Domain exceptions stay framework-free; the mapping is in one
-readable table of methods.
+**錯誤翻譯只有一個地方。** `GlobalExceptionHandler`（一個 Spring `@RestControllerAdvice`）是*唯一*知道業務錯誤要對應到哪個
+HTTP 狀態碼的地方。Domain 例外保持與框架無關；對應關係集中在一張好讀的方法表裡。
 
-**Authentication is simulated for this teaching slice.** Instead of full Spring Security + JWT, a custom
-`@CurrentCustomer` argument resolver reads an `X-Customer-Id` header and turns it into a `CustomerId`. This preserves
-the important boundary — *the controller does not perform business authorization* (the domain does, via
-`verifyOwnership`) — while keeping the project runnable and easy to test. A production version swaps the resolver for
-one that reads the JWT principal; nothing else changes.
+**本教學切片的認證是模擬的。** 這裡不用完整的 Spring Security + JWT，而是用一個自訂的 `@CurrentCustomer` 參數解析器讀取
+`X-Customer-Id` Header 並轉成 `CustomerId`。這保留了重要的邊界——*Controller 不做業務授權*（授權由領域的 `verifyOwnership`
+完成）——同時讓專案可執行、好測試。正式版只要把解析器換成讀取 JWT principal 的版本即可，其他都不用動。
 
 ---
 
-## 9. The API
+## 9. API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/accounts/{accountId}/transactions/twd` | NTD transaction history |
-| `GET` | `/api/v1/accounts/{accountId}/transactions/fx` | Foreign-currency history (shows TWD equivalent + rate) |
-| `GET` | `/api/v1/customers/me/privileges/transfer` | List transfer-fee privileges |
-| `GET` | `/api/v1/customers/me/privileges/transfer/{privilegeId}/usage` | A privilege's usage history |
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| `GET` | `/api/v1/accounts/{accountId}/transactions/twd` | 台幣交易紀錄 |
+| `GET` | `/api/v1/accounts/{accountId}/transactions/fx` | 外幣交易紀錄（呈現台幣等值 + 匯率） |
+| `GET` | `/api/v1/customers/me/privileges/transfer` | 列出轉帳優惠 |
+| `GET` | `/api/v1/customers/me/privileges/transfer/{privilegeId}/usage` | 某項優惠的使用紀錄 |
 
-Common query params: `startDate`, `endDate` (`YYYY-MM-DD`), `page` (default 0), `size` (default 20, max 100). The FX
-endpoint also requires `currency` (e.g. `USD`). All requests need the `X-Customer-Id` header.
+共用查詢參數：`startDate`、`endDate`（`YYYY-MM-DD`）、`page`（預設 0）、`size`（預設 20，上限 100）。外幣端點另需
+`currency`（例如 `USD`）。所有請求都需要 `X-Customer-Id` Header。
 
-Every response uses one envelope:
+每個回應都使用統一的外層格式：
 
 ```json
-// success
+// 成功
 { "code": "SUCCESS", "data": { "...": "..." }, "timestamp": "2026-06-28T21:09:44+08:00" }
 
-// failure
+// 失敗
 { "code": "ACCOUNT_NOT_OWNED_BY_CUSTOMER", "message": "…", "timestamp": "…" }
 ```
 
 ---
 
-## 10. How errors become HTTP status codes
+## 10. 錯誤如何轉換成 HTTP 狀態碼
 
-The flow is always: **domain throws a meaningful exception → `GlobalExceptionHandler` maps it → client gets a status + code.**
+流程永遠是：**領域拋出有業務語意的例外 → `GlobalExceptionHandler` 對應 → 用戶端收到狀態碼 + code。**
 
-| Exception (thrown by) | HTTP | `code` |
-|------------------------|------|--------|
-| `InvalidAccountIdFormatException` / bad params (Controller) | 400 | `INVALID_ACCOUNT_ID` / `BAD_REQUEST` |
-| `UnsupportedCurrencyException` (Currency) | 400 | `UNSUPPORTED_CURRENCY` |
-| missing `X-Customer-Id` (resolver) | 401 | `UNAUTHORIZED` |
-| `AccountNotOwnedByCustomerException` (Account) | 403 | `ACCOUNT_NOT_OWNED_BY_CUSTOMER` |
-| `PrivilegeNotOwnedByCustomerException` (TransferPrivilege) | 403 | `PRIVILEGE_NOT_OWNED_BY_CUSTOMER` |
-| `AccountNotFoundException` (Handler) | 404 | `ACCOUNT_NOT_FOUND` |
-| `PrivilegeNotFoundException` (Handler) | 404 | `PRIVILEGE_NOT_FOUND` |
-| `AccountNotActiveException` (Account) | 422 | `ACCOUNT_NOT_ACTIVE` |
-| `QueryRangeExceededException` (Account) | 422 | `QUERY_RANGE_EXCEEDED` |
-| `AccountCurrencyMismatchException` (Account) | 422 | `ACCOUNT_CURRENCY_MISMATCH` |
+| 例外（由誰拋出） | HTTP | `code` |
+|------------------|------|--------|
+| `InvalidAccountIdFormatException` / 參數錯誤（Controller） | 400 | `INVALID_ACCOUNT_ID` / `BAD_REQUEST` |
+| `UnsupportedCurrencyException`（Currency） | 400 | `UNSUPPORTED_CURRENCY` |
+| 缺少 `X-Customer-Id`（解析器） | 401 | `UNAUTHORIZED` |
+| `AccountNotOwnedByCustomerException`（Account） | 403 | `ACCOUNT_NOT_OWNED_BY_CUSTOMER` |
+| `PrivilegeNotOwnedByCustomerException`（TransferPrivilege） | 403 | `PRIVILEGE_NOT_OWNED_BY_CUSTOMER` |
+| `AccountNotFoundException`（Handler） | 404 | `ACCOUNT_NOT_FOUND` |
+| `PrivilegeNotFoundException`（Handler） | 404 | `PRIVILEGE_NOT_FOUND` |
+| `AccountNotActiveException`（Account） | 422 | `ACCOUNT_NOT_ACTIVE` |
+| `QueryRangeExceededException`（Account） | 422 | `QUERY_RANGE_EXCEEDED` |
+| `AccountCurrencyMismatchException`（Account） | 422 | `ACCOUNT_CURRENCY_MISMATCH` |
 
 ---
 
-## 11. Testing strategy
+## 11. 測試策略
 
-Tests mirror the layers and run fastest-first — this is the TDD pyramid in practice (33 tests total):
+測試對應各層，並以最快者優先執行——這就是實務上的 TDD 金字塔（共 33 個測試）：
 
 ```mermaid
 flowchart TB
-    D["Domain unit tests<br/>plain JUnit, no Spring<br/>MoneyTest, DateRangeTest, AccountTest, TransferPrivilegeTest"]
-    A["Application tests<br/>JUnit + Mockito<br/>mock the Load*Ports, verify orchestration"]
-    W["Controller tests<br/>@WebMvcTest + MockMvc<br/>verify HTTP status & JSON for each path"]
+    D["Domain 單元測試<br/>純 JUnit，不用 Spring<br/>MoneyTest、DateRangeTest、AccountTest、TransferPrivilegeTest"]
+    A["Application 測試<br/>JUnit + Mockito<br/>mock 掉 Load*Ports，驗證協調流程"]
+    W["Controller 測試<br/>@WebMvcTest + MockMvc<br/>驗證每條路徑的 HTTP 狀態與 JSON"]
     D --> A --> W
     style D fill:#e8f5e9,stroke:#2e7d32
     style A fill:#e3f2fd,stroke:#1565c0
     style W fill:#fff3e0,stroke:#e65100
 ```
 
-- **Domain tests** are pure and instant — they prove the rules (e.g. "adding USD to TWD throws", "a 14-month range is rejected").
-- **Application tests** mock the ports (`@Mock LoadAccountPort`) so they test *only* the Handler's orchestration —
-  e.g. "if the account isn't found, we never query transactions".
-- **Controller tests** mock the use case and assert the HTTP contract — status codes and the JSON envelope.
+- **Domain 測試**純粹且即時——它們證明規則（例如「把 USD 加到 TWD 會拋例外」、「14 個月的區間會被拒絕」）。
+- **Application 測試**把 Port mock 掉（`@Mock LoadAccountPort`），因此*只*測 Handler 的協調流程——例如「找不到帳戶時，
+  我們絕不查詢交易」。
+- **Controller 測試**把 Use Case mock 掉，並斷言 HTTP 合約——狀態碼與 JSON 外層格式。
 
-Run a single layer, e.g.: `./gradlew test --tests "*AccountTest"`.
-
----
-
-## 12. Where this differs from the tutorial
-
-To stay runnable on any machine with just a JDK, this slice substitutes the heavy infrastructure with lightweight
-equivalents that keep the **same interfaces**:
-
-| Tutorial | Here | Why it's safe |
-|----------|------|---------------|
-| Java 23 | Java 25 | Superset; identical language features used |
-| PostgreSQL + JPA + Redis + Testcontainers | In-memory adapters | They implement the same `Load*Port`; swap in `*JpaAdapter` with no core changes |
-| Spring Security + JWT | `X-Customer-Id` header + argument resolver | Keeps the "controller doesn't authorize" boundary; trivially replaceable |
-| Cucumber BDD, WireMock, Micrometer, OpenAPI | covered by `@WebMvcTest` + curl | Sprint-5 scope, out of this slice |
-
-The full design rationale (including the three rejected read-side options and the ADRs) is in
-[`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md).
+只跑某一層，例如：`./gradlew test --tests "*AccountTest"`。
 
 ---
 
-## Glossary
+## 12. 與 Tutorial 的差異
 
-- **Domain** — the business world (accounts, money, privileges) modelled in code, free of technical concerns.
-- **Aggregate / Aggregate Root** — a cluster of related objects treated as one unit; the *root* (e.g. `Account`) is the
-  only entry point and enforces all the cluster's rules. Here, a `Transaction` is reached only via its `Account`.
-- **Entity** — an object with an identity that persists over time (e.g. `Transaction`, identified by `TransactionId`).
-- **Value Object** — an object defined purely by its values, immutable, with no identity (e.g. `Money`, `DateRange`). Two
-  `Money(100, TWD)` are interchangeable.
-- **Port** — an interface owned by the application core. *Input ports* are use cases the app offers; *output ports*
-  (`Load*Port`) are capabilities the app needs from the outside.
-- **Adapter** — a concrete implementation of a port living in Infrastructure. *Driving* adapters call the app (REST
-  controller); *driven* adapters are called by the app (persistence).
-- **CQRS** — Command Query Responsibility Segregation: separating the write path from the read path. This project
-  implements only the read (query) side.
-- **Dependency Inversion** — high-level code depends on interfaces, not concrete details; the details depend on the
-  interfaces. It's what lets the database point "inward" to the application's ports.
-- **DTO** — Data Transfer Object: a plain shape used to carry data across a boundary (here, the JSON `*Result` / `*Dto`
-  records returned to clients).
+為了讓這個切片在任何只裝了 JDK 的機器上都能執行，本實作用較輕量、但**介面相同**的等價物取代了笨重的基礎設施：
+
+| Tutorial | 本實作 | 為何安全 |
+|----------|--------|----------|
+| Java 23 | Java 25 | 超集；使用的語言特性完全相同 |
+| PostgreSQL + JPA + Redis + Testcontainers | 記憶體 Adapter | 它們實作相同的 `Load*Port`；換成 `*JpaAdapter` 不需改核心 |
+| Spring Security + JWT | `X-Customer-Id` Header + 參數解析器 | 維持「Controller 不做授權」的邊界；可輕易替換 |
+| Cucumber BDD、WireMock、Micrometer、OpenAPI | 以 `@WebMvcTest` + curl 覆蓋 | 屬 Sprint-5 範圍，不在此切片內 |
+
+完整的設計理由（包含三個被否決的讀取側方案與各項 ADR）收錄於 [`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md)。
+
+---
+
+## 名詞解釋
+
+- **Domain（領域）** — 用程式碼建模的業務世界（帳戶、金錢、優惠），不含任何技術考量。
+- **Aggregate / Aggregate Root（聚合／聚合根）** — 一群相關物件被當作單一單位；其*root*（例如 `Account`）是唯一入口，
+  並強制執行整群的規則。這裡的 `Transaction` 只能透過它的 `Account` 取得。
+- **Entity（實體）** — 具有身分、會隨時間延續的物件（例如以 `TransactionId` 識別的 `Transaction`）。
+- **Value Object（值物件）** — 純粹由其值定義、不可變、沒有身分的物件（例如 `Money`、`DateRange`）。兩個
+  `Money(100, TWD)` 可互換。
+- **Port（埠）** — 由應用核心擁有的介面。*Input port* 是應用程式對外提供的 Use Case；*output port*（`Load*Port`）是應用程式
+  需要外界提供的能力。
+- **Adapter（轉接器）** — 位於 Infrastructure、實作某個 Port 的具體類別。*Driving*（驅動端）adapter 呼叫應用程式（REST
+  controller）；*driven*（被驅動端）adapter 被應用程式呼叫（持久化）。
+- **CQRS** — Command Query Responsibility Segregation（命令查詢職責分離）：把寫入路徑與讀取路徑分開。本專案只實作讀取
+  （查詢）側。
+- **Dependency Inversion（依賴反轉）** — 高階程式碼依賴介面而非具體細節；細節反過來依賴介面。正是這點讓資料庫能往「內」
+  指向應用程式的 Port。
+- **DTO** — Data Transfer Object（資料傳輸物件）：用來跨邊界搬運資料的單純結構（這裡是回傳給用戶端的 JSON `*Result` /
+  `*Dto` record）。
