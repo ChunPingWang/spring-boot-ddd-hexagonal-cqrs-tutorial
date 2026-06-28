@@ -1,5 +1,6 @@
 package com.bank.accountquery.bdd;
 
+import com.bank.accountquery.infrastructure.adapter.out.eventstore.PrivilegeEventJpaRepository;
 import com.bank.accountquery.infrastructure.adapter.out.persistence.jpa.repository.AccountJpaRepository;
 import com.bank.accountquery.infrastructure.adapter.out.persistence.jpa.repository.PrivilegeJpaRepository;
 import com.bank.accountquery.infrastructure.adapter.out.persistence.jpa.repository.TransactionJpaRepository;
@@ -14,22 +15,26 @@ public class Hooks {
     private final AccountJpaRepository accountRepository;
     private final TransactionJpaRepository transactionRepository;
     private final PrivilegeJpaRepository privilegeRepository;
+    private final PrivilegeEventJpaRepository privilegeEventRepository;
     private final ScenarioContext context;
 
     public Hooks(AccountJpaRepository accountRepository,
                  TransactionJpaRepository transactionRepository,
                  PrivilegeJpaRepository privilegeRepository,
+                 PrivilegeEventJpaRepository privilegeEventRepository,
                  ScenarioContext context) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.privilegeRepository = privilegeRepository;
+        this.privilegeEventRepository = privilegeEventRepository;
         this.context = context;
     }
 
     @Before
     public void resetState() {
         transactionRepository.deleteAll();
-        privilegeRepository.deleteAll();   // cascade 刪除 usage records
+        privilegeRepository.deleteAll();        // cascade 刪除 usage records
+        privilegeEventRepository.deleteAll();   // 清空事件庫
         accountRepository.deleteAll();
         context.reset();
     }

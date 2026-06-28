@@ -4,6 +4,7 @@ import com.bank.accountquery.domain.exception.AccountCurrencyMismatchException;
 import com.bank.accountquery.domain.exception.AccountNotActiveException;
 import com.bank.accountquery.domain.exception.AccountNotFoundException;
 import com.bank.accountquery.domain.exception.AccountNotOwnedByCustomerException;
+import com.bank.accountquery.domain.exception.ConcurrencyConflictException;
 import com.bank.accountquery.domain.exception.InvalidAccountIdFormatException;
 import com.bank.accountquery.domain.exception.PrivilegeExpiredException;
 import com.bank.accountquery.domain.exception.PrivilegeNotFoundException;
@@ -75,6 +76,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(PrivilegeQuotaExhaustedException.class)
     public ResponseEntity<ApiResponse<Void>> handlePrivilegeQuotaExhausted(PrivilegeQuotaExhaustedException ex) {
         return build(HttpStatus.UNPROCESSABLE_ENTITY, "PRIVILEGE_QUOTA_EXHAUSTED", ex.getMessage());
+    }
+
+    // ── 409 樂觀並行衝突（事件溯源 append 版本不符）──────────────────
+    @ExceptionHandler(ConcurrencyConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConcurrencyConflict(ConcurrencyConflictException ex) {
+        return build(HttpStatus.CONFLICT, "CONCURRENCY_CONFLICT", ex.getMessage());
     }
 
     // ── 400 請求參數錯誤 ────────────────────────────────────────────

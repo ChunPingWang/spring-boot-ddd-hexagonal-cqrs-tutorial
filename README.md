@@ -29,8 +29,9 @@
 11. [測試策略](#11-測試策略)
 12. [BDD 情境測試（Cucumber + Gherkin）](#12-bdd-情境測試cucumber--gherkin)
 13. [寫入側：使用一次轉帳優惠（CQRS 命令側）](#13-寫入側使用一次轉帳優惠cqrs-命令側)
-14. [與 Tutorial 的差異](#14-與-tutorial-的差異)
-15. [名詞解釋](#名詞解釋)
+14. [事件溯源與領域事件消費（Event Sourcing）](#14-事件溯源與領域事件消費event-sourcing)
+15. [與 Tutorial 的差異](#15-與-tutorial-的差異)
+16. [名詞解釋](#名詞解釋)
 
 ---
 
@@ -41,7 +42,7 @@
 
 ```bash
 # 在 repo 根目錄執行
-./gradlew test         # 執行全部 74 個測試；整合測試與 BDD 會以 Testcontainers 啟動真實 PostgreSQL
+./gradlew test         # 執行全部 82 個測試；整合測試與 BDD 會以 Testcontainers 啟動真實 PostgreSQL
 ./gradlew bootTestRun  # 在 http://localhost:8080 啟動 API，並自動以 Testcontainers 提供 PostgreSQL（最省事）
 # 或：自備 PostgreSQL（podman compose up -d / docker compose up -d，見 compose.yaml）後執行 ./gradlew bootRun
 ```
@@ -147,15 +148,17 @@ application/
 
 infrastructure/
 ├── adapter/
-│   ├── in/rest/     Controllers、GlobalExceptionHandler、ApiResponse、CurrentCustomer
+│   ├── in/rest/     Controllers（含 EventSourcedPrivilegeController）、GlobalExceptionHandler、CurrentCustomer
 │   └── out/
 │       ├── persistence/jpa/   JPA 實作：entity/、repository/、mappers、*PersistenceAdapter
-│       └── event/             LoggingDomainEventPublisher（實作 DomainEventPublisher）
+│       ├── eventstore/        事件溯源：PrivilegeEventEntity/Repository、EventStoreAdapter
+│       ├── audit/             領域事件消費端：PrivilegeAuditListener（@EventListener）+ 稽核表
+│       └── event/             DomainEventPublisherAdapter（轉發到 Spring 事件系統）
 ├── bootstrap/       DemoDataSeeder（啟動時寫入示範資料，可關閉）
 └── config/          WebConfig、SecurityConfig（JWT / OAuth2 Resource Server）
 
 resources/
-├── db/migration/    Flyway schema（V1__init_schema.sql）
+├── db/migration/    Flyway：V1__init_schema、V2__privilege_event_store、V3__privilege_audit_log
 └── application.yml  datasource / jpa / flyway / security 設定
 ```
 
@@ -438,6 +441,10 @@ entry point 回傳統一格式的 `401 UNAUTHORIZED`。通過後，`@CurrentCust
 | `GET` | `/api/v1/customers/me/privileges/transfer` | 列出轉帳優惠 |
 | `GET` | `/api/v1/customers/me/privileges/transfer/{privilegeId}/usage` | 某項優惠的使用紀錄 |
 | `POST` | `/api/v1/customers/me/privileges/transfer/{privilegeId}/use` | **使用一次優惠（寫入側，見 §13）** |
+| `POST` | `/api/v1/es/privileges/{privilegeId}/grant` | **核發優惠（事件溯源，見 §14）** |
+| `POST` | `/api/v1/es/privileges/{privilegeId}/use` | **使用一次優惠（事件溯源）** |
+| `GET` | `/api/v1/es/privileges/{privilegeId}` | **由事件重播得到的目前狀態** |
+| `GET` | `/api/v1/es/privileges/{privilegeId}/events` | **原始事件流（append-only）** |
 
 共用查詢參數：`startDate`、`endDate`（`YYYY-MM-DD`）、`page`（預設 0）、`size`（預設 20，上限 100）。外幣端點另需
 `currency`（例如 `USD`）。所有 `/api/**` 請求都需要 `Authorization: Bearer <JWT>`（JWT 的 `sub` 即客戶代號）。
@@ -472,12 +479,13 @@ entry point 回傳統一格式的 `401 UNAUTHORIZED`。通過後，`@CurrentCust
 | `AccountCurrencyMismatchException`（Account） | 422 | `ACCOUNT_CURRENCY_MISMATCH` |
 | `PrivilegeExpiredException`（TransferPrivilege.use） | 422 | `PRIVILEGE_EXPIRED` |
 | `PrivilegeQuotaExhaustedException`（TransferPrivilege.use） | 422 | `PRIVILEGE_QUOTA_EXHAUSTED` |
+| `ConcurrencyConflictException`（事件庫 append 版本不符） | 409 | `CONCURRENCY_CONFLICT` |
 
 ---
 
 ## 11. 測試策略
 
-測試對應各層，並以最快者優先執行——這就是實務上的 TDD 金字塔（共 74 個測試：45 單元/切片 + 2 JPA 整合 + 27 BDD 情境）。
+測試對應各層，並以最快者優先執行——這就是實務上的 TDD 金字塔（共 82 個測試：45 單元/切片 + 6 整合（JPA／事件溯源）+ 31 BDD 情境）。
 整合測試與 BDD 會以 **Testcontainers** 啟動真實 PostgreSQL：
 
 ```mermaid
@@ -485,8 +493,8 @@ flowchart TB
     D["Domain 單元測試<br/>純 JUnit，不用 Spring<br/>MoneyTest、DateRangeTest、AccountTest、TransferPrivilegeTest"]
     A["Application 測試<br/>JUnit + Mockito<br/>mock 掉 Load*Ports，驗證協調流程"]
     W["Controller 測試<br/>@WebMvcTest + MockMvc<br/>驗證每條路徑的 HTTP 狀態與 JSON"]
-    I["JPA 整合測試<br/>@SpringBootTest + Testcontainers<br/>真實 PostgreSQL 驗證 Adapter 與 Aggregate 持久化"]
-    E["BDD 端對端情境測試<br/>Cucumber + Gherkin（27 情境）<br/>真實 HTTP + 真實 PostgreSQL（見 §12）"]
+    I["整合測試<br/>@SpringBootTest + Testcontainers<br/>真實 PostgreSQL：JPA 持久化 + 事件溯源（重播/並行/投影/稽核）"]
+    E["BDD 端對端情境測試<br/>Cucumber + Gherkin（31 情境）<br/>真實 HTTP + 真實 PostgreSQL（見 §12）"]
     D --> A --> W --> I --> E
     style D fill:#e8f5e9,stroke:#2e7d32
     style A fill:#e3f2fd,stroke:#1565c0
@@ -499,8 +507,9 @@ flowchart TB
 - **Application 測試**把 Port mock 掉（`@Mock LoadAccountPort`），因此*只*測 Handler 的協調流程——例如「找不到帳戶時，
   我們絕不查詢交易」。
 - **Controller 測試**把 Use Case mock 掉，並斷言 HTTP 合約——狀態碼與 JSON 外層格式。
-- **JPA 整合測試**（`JpaPersistenceTest`）在真實 PostgreSQL 上驗證 Adapter 映射，以及「以 Aggregate Root 為單位
-  儲存」——存入優惠、`use()` 一次、再讀回，確認次數與使用紀錄都正確持久化。
+- **JPA 整合測試**（`JpaPersistenceTest`）在真實 PostgreSQL 上驗證 Adapter 映射與「以 Aggregate Root 為單位儲存」。
+- **事件溯源整合測試**（`EventSourcingIntegrationTest`）驗證核發/使用後的事件流、重播重建狀態、樂觀並行衝突、
+  投影回讀表，以及 `@EventListener` 稽核消費端（見 §14）。
 - **BDD 情境測試**啟動真實伺服器 + 真實 PostgreSQL，從外部以 HTTP 驗證完整行為（詳見 [§12](#12-bdd-情境測試cucumber--gherkin)）。
 
 只跑某一層，例如：`./gradlew test --tests "*AccountTest"`；只跑 BDD：`./gradlew test --tests "*RunCucumberTest"`。
@@ -667,7 +676,90 @@ curl -H "Authorization: Bearer $JWT" \
 
 ---
 
-## 14. 與 Tutorial 的差異
+## 14. 事件溯源與領域事件消費（Event Sourcing）
+
+§13 的寫入是「狀態儲存」（把目前狀態存進資料表）。本節在**同一個 `TransferPrivilege` 聚合**上額外示範
+**事件溯源（Event Sourcing）**：不存狀態，而是把每一次變更存成**不可變的事件**，狀態由事件**重播**（fold）重建。
+帳戶／交易維持狀態儲存，正好形成對照。
+
+### 兩種寫入風格的對照
+
+| | 狀態儲存（§13） | 事件溯源（本節） |
+|---|---|---|
+| 真相來源 | `transfer_privilege` 目前狀態 | `privilege_event` 事件流（append-only） |
+| 寫入 | `save(目前狀態)` | `append(新事件)`（樂觀並行：版本＝事件數） |
+| 重建狀態 | 直接讀欄位 | `rehydrate(事件流)` 逐一 `apply` 折疊 |
+| 稽核軌跡 | 無（只有現值） | 完整歷史（每筆事實都在） |
+
+`TransferPrivilege` 同時支援兩者：公開建構子（狀態載入）與 `grant()`/`use()` + `rehydrate()`（事件溯源）。
+不變式（所有權、有效期、剩餘額度）只在 `use()` 內守護，兩條路共用。
+
+### 命令流程（含投影回讀模型）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as 用戶端
+    participant C as EventSourcedPrivilegeController
+    participant H as UseEventSourcedPrivilegeHandler
+    participant ES as EventStorePort
+    participant P as TransferPrivilege<br/>(rehydrated)
+    participant SP as SavePrivilegePort（投影）
+    participant EP as DomainEventPublisher
+
+    Client->>C: POST /es/privileges/{id}/use
+    C->>H: execute(command)
+    H->>ES: load(id)  → 事件流
+    ES-->>H: [Granted, Used, ...]（空→404）
+    H->>P: rehydrate(stream) 逐一 apply 重建狀態
+    H->>P: use(...)（守護不變式，產生 Used 事件）
+    H->>ES: append(id, expectedVersion=串流長度, [Used])
+    Note right of ES: 版本不符 → 409 CONCURRENCY_CONFLICT
+    H->>SP: save(privilege)  ← 投影回 transfer_privilege 讀表
+    H->>EP: publish(events)
+    H-->>C: 使用後狀態
+    C-->>Client: 200 SUCCESS
+```
+
+**投影（projection）**：事件附加後，以 `SavePrivilegePort.save()` 把折疊後的狀態寫回既有的 `transfer_privilege`
+讀表——所以**既有查詢 API（§9）完全不用改**就能讀到事件溯源寫入的結果（這正是 CQRS + ES 的精髓）。
+
+### 領域事件的「消費端」（@EventListener）
+
+事件除了存進事件庫，也由 `DomainEventPublisherAdapter` 轉發到 Spring 事件系統，讓**解耦的消費者**接收：
+`PrivilegeAuditListener` 以 `@EventListener` 監聽 `TransferPrivilegeGranted`／`TransferPrivilegeUsed`，
+寫入 `privilege_audit_log` 稽核表。發布者與消費者互不知道對方——這就是 pub/sub。
+（正式版常改用 `@TransactionalEventListener(AFTER_COMMIT)` 或非同步佇列。）
+
+### 試一下
+
+先依 [§1](#1-快速開始) 簽出 `$JWT`，再：
+
+```bash
+# 核發一個事件溯源優惠 E001（產生 Granted 事件）
+curl -X POST -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"type":"FEE_FREE_INTERBANK_TRANSFER","totalQuota":10,"validFrom":"2025-01-01","validTo":"2030-12-31"}' \
+  "http://localhost:8080/api/v1/es/privileges/E001/grant"
+
+# 使用兩次（各產生一個 Used 事件）
+curl -X POST -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"targetAccountNo":"81234567890123","savedAmount":15}' \
+  "http://localhost:8080/api/v1/es/privileges/E001/use"
+
+# 由事件「重播」得到目前狀態（remaining 會是 8）
+curl -H "Authorization: Bearer $JWT" "http://localhost:8080/api/v1/es/privileges/E001"
+# 檢視原始事件流（1 個 Granted + 2 個 Used）
+curl -H "Authorization: Bearer $JWT" "http://localhost:8080/api/v1/es/privileges/E001/events"
+```
+
+### 取捨（誠實說）
+事件溯源帶來完整稽核與時間旅行，但也帶來成本：**事件版本演進／序列化**、長串流的 **snapshot**、投影的
+**最終一致性**。所以本專案只在優惠聚合上示範、明確標示為教學用途；事件 payload 也以 union 欄位（非不透明 JSON）
+簡化儲存。帳戶／交易這類讀多寫少、量大的資料維持狀態儲存。
+
+---
+
+## 15. 與 Tutorial 的差異
 
 為了讓這個切片在任何只裝了 JDK 的機器上都能執行，本實作用較輕量、但**介面相同**的等價物取代了笨重的基礎設施：
 
@@ -676,8 +768,9 @@ curl -H "Authorization: Bearer $JWT" \
 | Java 23 | Java 25 | 超集；使用的語言特性完全相同 |
 | PostgreSQL + JPA + Flyway + Testcontainers | **已實作**（JPA Adapter、Flyway schema、Testcontainers 測試） | 與 Tutorial 一致 |
 | Spring Security + JWT（RS256）| **Spring Security OAuth2 Resource Server（HS256）** | 已實作真實 JWT 驗證；正式版改用 RS256 即可 |
-| Cucumber BDD（Testcontainers／WireMock 版） | **Cucumber + Testcontainers PostgreSQL**（見 §12） | 已實作 27 個端對端情境，跑在真實資料庫上 |
-| 僅讀取側 | 讀取側 + **一個寫入命令**（見 §13） | 補齊 Command／Event，成為更完整的 DDD 示範 |
+| Cucumber BDD（Testcontainers／WireMock 版） | **Cucumber + Testcontainers PostgreSQL**（見 §12） | 已實作 31 個端對端情境，跑在真實資料庫上 |
+| 僅讀取側 | 讀取側 + **寫入命令 + 事件溯源**（見 §13、§14） | 補齊 Command／Event Sourcing／Domain Event 消費 |
+| 稽核日誌（Sprint 5） | **以領域事件 @EventListener 寫入**（見 §14） | 事件驅動的稽核軌跡 |
 | Redis 快取、WireMock（Core Banking）、Micrometer、OpenAPI | 暫未納入 | 屬後續 Sprint 範圍 |
 
 完整的設計理由（包含三個被否決的讀取側方案與各項 ADR）收錄於 [`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md)。
@@ -701,6 +794,10 @@ curl -H "Authorization: Bearer $JWT" \
   Application 透過 Output Port 發布。
 - **CQRS** — Command Query Responsibility Segregation（命令查詢職責分離）：把寫入路徑與讀取路徑分開。本專案以讀取（查詢）側
   為主，並示範一個完整的寫入側命令（使用一次轉帳優惠，見 §13）。
+- **Event Sourcing（事件溯源）** — 不儲存「目前狀態」，而是儲存導致狀態的**事件序列**；狀態由重播（fold）事件重建（見 §14）。
+- **Event Store（事件庫）** — 只能附加（append-only）的事件儲存；以 (聚合, 版本) 做樂觀並行控制。
+- **Projection（投影）** — 把事件流轉成可查詢的讀模型；本專案把事件溯源寫入投影回既有的 `transfer_privilege` 讀表。
+- **Rehydrate（重建）** — 從事件流重新建立聚合的目前狀態（`TransferPrivilege.rehydrate`）。
 - **Dependency Inversion（依賴反轉）** — 高階程式碼依賴介面而非具體細節；細節反過來依賴介面。正是這點讓資料庫能往「內」
   指向應用程式的 Port。
 - **DTO** — Data Transfer Object（資料傳輸物件）：用來跨邊界搬運資料的單純結構（這裡是回傳給用戶端的 JSON `*Result` /
