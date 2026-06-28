@@ -15,10 +15,12 @@ import org.springframework.stereotype.Component;
 public class ApiClient {
 
     private final Environment env;
+    private final JwtTokenFactory tokenFactory;
     private final HttpClient http = HttpClient.newHttpClient();
 
-    public ApiClient(Environment env) {
+    public ApiClient(Environment env, JwtTokenFactory tokenFactory) {
         this.env = env;
+        this.tokenFactory = tokenFactory;
     }
 
     public record Response(int status, String body) {}
@@ -41,7 +43,7 @@ public class ApiClient {
 
     private Response send(HttpRequest.Builder builder, String customerId, String path) {
         if (customerId != null) {
-            builder.header("X-Customer-Id", customerId);
+            builder.header("Authorization", "Bearer " + tokenFactory.tokenFor(customerId));
         }
         try {
             HttpResponse<String> resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());

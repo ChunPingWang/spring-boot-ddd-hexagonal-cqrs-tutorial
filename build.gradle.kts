@@ -22,10 +22,13 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server") // JWT 驗證
 
     // ── Test ──────────────────────────────────────────────────────────
     testImplementation("org.springframework.boot:spring-boot-starter-test") // JUnit 5 + Mockito + AssertJ
     testImplementation("org.springframework.boot:spring-boot-webmvc-test")  // @WebMvcTest slice (Spring Boot 4 module)
+    testImplementation("org.springframework.security:spring-security-test")
     testImplementation("com.jayway.jsonpath:json-path")
 
     // ── BDD：Cucumber 7 + Gherkin（端對端情境測試）──────────────────────

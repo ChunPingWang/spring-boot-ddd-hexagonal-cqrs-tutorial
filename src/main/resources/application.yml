@@ -7,3 +7,10 @@ spring:
 
 server:
   port: 8080
+
+app:
+  security:
+    jwt:
+      # 示範用對稱密鑰（HS256，需 ≥ 32 bytes）。正式環境應改用 RS256 非對稱金鑰並從祕密管理服務注入。
+      secret: ${JWT_SECRET:demo-secret-key-please-change-in-production-0123456789}
+

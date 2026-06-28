@@ -2,6 +2,7 @@ package com.bank.accountquery.infrastructure.adapter.in.rest;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -20,21 +21,27 @@ import com.bank.accountquery.domain.model.shared.CustomerId;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import com.bank.accountquery.infrastructure.config.SecurityConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PrivilegeController.class)
+@Import(SecurityConfig.class)
 class PrivilegeControllerTest {
-
-    private static final String CUSTOMER_HEADER = "X-Customer-Id";
 
     @Autowired MockMvc mockMvc;
     @MockitoBean GetTransferPrivilegeUseCase getTransferPrivilege;
     @MockitoBean GetPrivilegeUsageHistoryUseCase getPrivilegeUsageHistory;
     @MockitoBean UseTransferPrivilegeUseCase useTransferPrivilege;
+
+    private static JwtRequestPostProcessor asCustomer(String customerId) {
+        return jwt().jwt(builder -> builder.subject(customerId));
+    }
 
     @Test
     @DisplayName("成功查詢轉帳優惠 — 回傳 200 與優惠清單")
@@ -45,7 +52,7 @@ class PrivilegeControllerTest {
             .willReturn(new TransferPrivilegeResult(List.of(dto)));
 
         mockMvc.perform(get("/api/v1/customers/me/privileges/transfer")
-                .header(CUSTOMER_HEADER, "C001"))
+                .with(asCustomer("C001")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value("SUCCESS"))
             .andExpect(jsonPath("$.data.privileges[0].remainingQuota").value(7))
@@ -60,7 +67,7 @@ class PrivilegeControllerTest {
                 PrivilegeId.of("P999"), CustomerId.of("C001")));
 
         mockMvc.perform(get("/api/v1/customers/me/privileges/transfer/P999/usage")
-                .header(CUSTOMER_HEADER, "C001")
+                .with(asCustomer("C001"))
                 .param("startDate", "2025-01-01")
                 .param("endDate", "2025-01-31"))
             .andExpect(status().isForbidden())
@@ -74,7 +81,7 @@ class PrivilegeControllerTest {
             .willReturn(new UseTransferPrivilegeResult("P001", 4, 6));
 
         mockMvc.perform(post("/api/v1/customers/me/privileges/transfer/P001/use")
-                .header(CUSTOMER_HEADER, "C001")
+                .with(asCustomer("C001"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"targetAccountNo\":\"81234567890123\",\"savedAmount\":15}"))
             .andExpect(status().isOk())
@@ -89,7 +96,7 @@ class PrivilegeControllerTest {
             .willThrow(new PrivilegeQuotaExhaustedException(PrivilegeId.of("P001")));
 
         mockMvc.perform(post("/api/v1/customers/me/privileges/transfer/P001/use")
-                .header(CUSTOMER_HEADER, "C001")
+                .with(asCustomer("C001"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"targetAccountNo\":\"81234567890123\",\"savedAmount\":15}"))
             .andExpect(status().isUnprocessableEntity())
