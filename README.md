@@ -8,7 +8,7 @@ architecture books:
 - **CQRS (read side)** — treat "reading data" as its own well-defined path.
 - **TDD** — every rule is covered by a fast, readable test.
 
-It implements a real feature set from [`../banking-api-tutorial-v2.md`](../banking-api-tutorial-v2.md): querying NTD/foreign-currency
+It implements a real feature set from [`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md): querying NTD/foreign-currency
 transactions and transfer-fee privileges, **for the logged-in customer only**.
 
 > New to these terms? Jump to the [Glossary](#glossary) at the bottom — then come back. You don't need to know
@@ -40,8 +40,7 @@ transactions and transfer-fee privileges, **for the logged-in customer only**.
 Gradle, Docker, PostgreSQL, or Redis — the Gradle wrapper is included and the data is in-memory.
 
 ```bash
-cd banking-account-query-service
-
+# from the repository root
 ./gradlew test       # run all 33 tests (should be green)
 ./gradlew bootRun    # start the API on http://localhost:8080
 ```
@@ -496,7 +495,7 @@ equivalents that keep the **same interfaces**:
 | Cucumber BDD, WireMock, Micrometer, OpenAPI | covered by `@WebMvcTest` + curl | Sprint-5 scope, out of this slice |
 
 The full design rationale (including the three rejected read-side options and the ADRs) is in
-[`../banking-api-tutorial-v2.md`](../banking-api-tutorial-v2.md).
+[`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md).
 
 ---
 
