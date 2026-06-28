@@ -4,6 +4,18 @@ spring:
   threads:
     virtual:
       enabled: true   # Java 21+ Virtual Threads (Project Loom) for high-concurrency I/O
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/banking}
+    username: ${SPRING_DATASOURCE_USERNAME:banking}
+    password: ${SPRING_DATASOURCE_PASSWORD:banking}
+  jpa:
+    hibernate:
+      ddl-auto: validate   # schema 由 Flyway 管理，Hibernate 僅驗證
+    open-in-view: false
+    properties:
+      hibernate.format_sql: false
+  flyway:
+    enabled: true
 
 server:
   port: 8080
@@ -13,4 +25,7 @@ app:
     jwt:
       # 示範用對稱密鑰（HS256，需 ≥ 32 bytes）。正式環境應改用 RS256 非對稱金鑰並從祕密管理服務注入。
       secret: ${JWT_SECRET:demo-secret-key-please-change-in-production-0123456789}
+  # 啟動時寫入示範資料（demo）。整合測試會關閉，改由情境自行佈置。
+  demo-seed:
+    enabled: ${APP_DEMO_SEED_ENABLED:true}
 

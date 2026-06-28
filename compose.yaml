@@ -1,0 +1,12 @@
+# 本機開發用 PostgreSQL。以 `docker compose up -d`（或 `podman compose up -d`）啟動，
+# 連線資訊與 application.yml 的預設值一致。整合測試不使用此檔（改用 Testcontainers）。
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: banking-postgres
+    environment:
+      POSTGRES_DB: banking
+      POSTGRES_USER: banking
+      POSTGRES_PASSWORD: banking
+    ports:
+      - "5432:5432"

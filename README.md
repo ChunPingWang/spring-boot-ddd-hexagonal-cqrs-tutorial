@@ -36,13 +36,14 @@
 
 ## 1. 快速開始
 
-**先決條件：** 一套 JDK（Java 23 以上——本專案設定為 Java 25）。你**不需要**安裝 Gradle、Docker、PostgreSQL 或 Redis
-——專案內含 Gradle wrapper，資料皆在記憶體中。
+**先決條件：** 一套 JDK（Java 23 以上——本專案設定為 Java 25）與 **Docker／Podman**（用於 PostgreSQL）。
+不需另外安裝 Gradle（內含 wrapper）。資料持久化於 **PostgreSQL**，測試與本機啟動都用 **Testcontainers** 自動拉起資料庫。
 
 ```bash
 # 在 repo 根目錄執行
-./gradlew test       # 執行全部 72 個測試（45 單元/切片 + 27 BDD 情境，應全綠）
-./gradlew bootRun    # 在 http://localhost:8080 啟動 API
+./gradlew test         # 執行全部 74 個測試；整合測試與 BDD 會以 Testcontainers 啟動真實 PostgreSQL
+./gradlew bootTestRun  # 在 http://localhost:8080 啟動 API，並自動以 Testcontainers 提供 PostgreSQL（最省事）
+# 或：自備 PostgreSQL（podman compose up -d / docker compose up -d，見 compose.yaml）後執行 ./gradlew bootRun
 ```
 
 接著開另一個終端機試打一個請求。API 受 **JWT（Bearer Token）** 保護（見[§8](#8-設計決策說明)）。先用示範密鑰簽一個
@@ -85,7 +86,7 @@ flowchart LR
     subgraph Infrastructure["基礎設施層 Infrastructure（最外層）"]
         direction TB
         REST["REST Controllers<br/>(Spring MVC)"]
-        DB["持久化 Adapters<br/>(記憶體 / JPA)"]
+        DB["持久化 Adapters<br/>(JPA / PostgreSQL)"]
     end
     subgraph Application["應用層 Application（中間層）"]
         direction TB
@@ -148,9 +149,14 @@ infrastructure/
 ├── adapter/
 │   ├── in/rest/     Controllers、GlobalExceptionHandler、ApiResponse、CurrentCustomer
 │   └── out/
-│       ├── persistence/inmemory/   實作 Load*Port / SavePrivilegePort 的 Adapters
-│       └── event/                  LoggingDomainEventPublisher（實作 DomainEventPublisher）
+│       ├── persistence/jpa/   JPA 實作：entity/、repository/、mappers、*PersistenceAdapter
+│       └── event/             LoggingDomainEventPublisher（實作 DomainEventPublisher）
+├── bootstrap/       DemoDataSeeder（啟動時寫入示範資料，可關閉）
 └── config/          WebConfig、SecurityConfig（JWT / OAuth2 Resource Server）
+
+resources/
+├── db/migration/    Flyway schema（V1__init_schema.sql）
+└── application.yml  datasource / jpa / flyway / security 設定
 ```
 
 ---
@@ -178,9 +184,9 @@ flowchart LR
     end
 
     Controller["AccountController<br/>（driving adapter）"]
-    AccAdapter["InMemoryAccountAdapter<br/>（driven adapter）"]
-    TxAdapter["InMemoryTransactionAdapter<br/>（driven adapter）"]
-    Store[("InMemoryBankingDataStore")]
+    AccAdapter["AccountPersistenceAdapter<br/>（driven adapter, JPA）"]
+    TxAdapter["TransactionPersistenceAdapter<br/>（driven adapter, JPA）"]
+    Store[("PostgreSQL")]
 
     Client -->|GET /transactions/twd| Controller
     Controller -->|建立 Query 並呼叫| InPort
@@ -193,7 +199,8 @@ flowchart LR
     style Domain fill:#e8f5e9,stroke:#2e7d32
 ```
 
-把 `InMemory*Adapter` 換成 `*JpaAdapter`，**核心完全不需要改動**——這就是「對 Port 寫程式」帶來的回報。
+持久化改用其他技術（換掉 `*PersistenceAdapter`，例如改 MongoDB 或加一層 Redis 快取）時，**核心完全不需要改動**
+——這就是「對 Port 寫程式」帶來的回報。
 
 ---
 
@@ -336,8 +343,8 @@ HTTP 狀態碼——見[§10](#10-錯誤如何轉換成-http-狀態碼)。
 
 ## 7. ER 圖 — 資料如何關聯
 
-本服務以查詢為主（另有一個寫入命令會更新 `TRANSFER_PRIVILEGE` 與 `PRIVILEGE_USAGE_RECORD`），內建記憶體資料，
-但其領域模型能乾淨地對應到 Tutorial 針對 PostgreSQL 所規劃的關聯式 schema。概念上：
+本服務以查詢為主（另有一個寫入命令會更新 `TRANSFER_PRIVILEGE` 與 `PRIVILEGE_USAGE_RECORD`）。下圖即實際的
+**PostgreSQL** schema（由 Flyway `V1__init_schema.sql` 建立），與領域型別一對一對應：
 
 ```mermaid
 erDiagram
@@ -470,18 +477,21 @@ entry point 回傳統一格式的 `401 UNAUTHORIZED`。通過後，`@CurrentCust
 
 ## 11. 測試策略
 
-測試對應各層，並以最快者優先執行——這就是實務上的 TDD 金字塔（共 72 個測試：45 單元/切片 + 27 BDD 情境）：
+測試對應各層，並以最快者優先執行——這就是實務上的 TDD 金字塔（共 74 個測試：45 單元/切片 + 2 JPA 整合 + 27 BDD 情境）。
+整合測試與 BDD 會以 **Testcontainers** 啟動真實 PostgreSQL：
 
 ```mermaid
 flowchart TB
     D["Domain 單元測試<br/>純 JUnit，不用 Spring<br/>MoneyTest、DateRangeTest、AccountTest、TransferPrivilegeTest"]
     A["Application 測試<br/>JUnit + Mockito<br/>mock 掉 Load*Ports，驗證協調流程"]
     W["Controller 測試<br/>@WebMvcTest + MockMvc<br/>驗證每條路徑的 HTTP 狀態與 JSON"]
-    E["BDD 端對端情境測試<br/>Cucumber + Gherkin（27 情境）<br/>真實 HTTP，走完整路徑（見 §12）"]
-    D --> A --> W --> E
+    I["JPA 整合測試<br/>@SpringBootTest + Testcontainers<br/>真實 PostgreSQL 驗證 Adapter 與 Aggregate 持久化"]
+    E["BDD 端對端情境測試<br/>Cucumber + Gherkin（27 情境）<br/>真實 HTTP + 真實 PostgreSQL（見 §12）"]
+    D --> A --> W --> I --> E
     style D fill:#e8f5e9,stroke:#2e7d32
     style A fill:#e3f2fd,stroke:#1565c0
     style W fill:#fff3e0,stroke:#e65100
+    style I fill:#ede7f6,stroke:#4527a0
     style E fill:#fce4ec,stroke:#ad1457
 ```
 
@@ -489,7 +499,9 @@ flowchart TB
 - **Application 測試**把 Port mock 掉（`@Mock LoadAccountPort`），因此*只*測 Handler 的協調流程——例如「找不到帳戶時，
   我們絕不查詢交易」。
 - **Controller 測試**把 Use Case mock 掉，並斷言 HTTP 合約——狀態碼與 JSON 外層格式。
-- **BDD 情境測試**啟動真實伺服器，從外部以 HTTP 驗證完整行為（詳見 [§12](#12-bdd-情境測試cucumber--gherkin)）。
+- **JPA 整合測試**（`JpaPersistenceTest`）在真實 PostgreSQL 上驗證 Adapter 映射，以及「以 Aggregate Root 為單位
+  儲存」——存入優惠、`use()` 一次、再讀回，確認次數與使用紀錄都正確持久化。
+- **BDD 情境測試**啟動真實伺服器 + 真實 PostgreSQL，從外部以 HTTP 驗證完整行為（詳見 [§12](#12-bdd-情境測試cucumber--gherkin)）。
 
 只跑某一層，例如：`./gradlew test --tests "*AccountTest"`；只跑 BDD：`./gradlew test --tests "*RunCucumberTest"`。
 
@@ -508,25 +520,31 @@ flowchart TB
 | **Cucumber 7 + Gherkin** | 以 `.feature` 檔描述情境，並對應到 Java 的 Step Definitions |
 | **JUnit Platform Suite** | `RunCucumberTest` 作為進入點，掃描 `features/` 並啟動 Cucumber engine |
 | **Spring Boot Test（`RANDOM_PORT`）** | 以隨機埠啟動**真實**應用程式 |
+| **Testcontainers（PostgreSQL）** | 以 `@ServiceConnection` 自動接上真實資料庫 |
 | **JDK `HttpClient`** | 從外部對真實 HTTP 端點發送請求並取得回應 |
 
 與只測單一切片的 `@WebMvcTest` 不同，BDD 情境走**完整路徑**：
-`HTTP → AccountController → Handler → Account（領域規則）→ 記憶體 Adapter`，是最貼近真實使用的驗證。
+`HTTP → AccountController → Handler → Account（領域規則）→ JPA Adapter → PostgreSQL`，是最貼近真實使用的驗證。
+`Hooks` 於每個情境前清空資料表，`DataSetupSteps` 則用 JPA Repository 寫入該情境所需資料。
 
 ### 檔案位置
 
 ```
 src/test/
-├── java/com/bank/accountquery/bdd/
-│   ├── RunCucumberTest.java            # @Suite 進入點
-│   ├── CucumberSpringConfiguration.java # @CucumberContextConfiguration + @SpringBootTest(RANDOM_PORT)
-│   ├── Hooks.java                       # 每個情境前 reset 資料源（情境彼此獨立）
-│   ├── ScenarioContext.java             # 跨步驟共用狀態（認證身分、回應）
-│   ├── ApiClient.java                   # 以 HttpClient 打真實端點（帶 Bearer JWT）
-│   ├── JwtTokenFactory.java             # 以相同密鑰簽出測試用 HS256 JWT
-│   ├── DataSetupSteps.java              # Given：佈置帳戶／交易／優惠
-│   ├── QuerySteps.java                  # When：發送查詢
-│   └── AssertionSteps.java              # Then：斷言狀態碼與內容
+├── java/com/bank/accountquery/
+│   ├── support/
+│   │   ├── TestcontainersConfiguration.java     # @ServiceConnection PostgreSQLContainer
+│   │   └── TestBankingAccountQueryApplication.java # ./gradlew bootTestRun 用的開發啟動器
+│   └── bdd/
+│       ├── RunCucumberTest.java            # @Suite 進入點
+│       ├── CucumberSpringConfiguration.java # @SpringBootTest(RANDOM_PORT) + Testcontainers
+│       ├── Hooks.java                       # 每個情境前清空資料表（情境彼此獨立）
+│       ├── ScenarioContext.java             # 跨步驟共用狀態（認證身分、回應）
+│       ├── ApiClient.java                   # 以 HttpClient 打真實端點（帶 Bearer JWT）
+│       ├── JwtTokenFactory.java             # 以相同密鑰簽出測試用 HS256 JWT
+│       ├── DataSetupSteps.java              # Given：用 JPA Repository 佈置帳戶／交易／優惠
+│       ├── QuerySteps.java                  # When：發送查詢／命令
+│       └── AssertionSteps.java              # Then：斷言狀態碼與內容
 └── resources/features/
     ├── account/twd_transaction_history.feature
     ├── account/fx_transaction_history.feature
@@ -644,8 +662,8 @@ curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8080/api/v1/customers/me/privileges/transfer/P001/usage?startDate=2020-01-01&endDate=2030-12-31"
 ```
 
-> 示範用的記憶體啟動資料中，`P001` 為有效優惠（有效期 2025–2030、剩餘 7 次），故上面的 `use` 會成功並使剩餘次數變為 6；
-> 重啟應用程式即可重置回 7。`P002` 則為已過期優惠，對其呼叫 `use` 會得到 `422 PRIVILEGE_EXPIRED`。
+> 由 `DemoDataSeeder` 寫入的示範資料中，`P001` 為有效優惠（有效期 2025–2030、剩餘 7 次），故上面的 `use` 會成功並使
+> 剩餘次數變為 6（此變更會持久化於 PostgreSQL）。`P002` 則為已過期優惠，對其呼叫 `use` 會得到 `422 PRIVILEGE_EXPIRED`。
 
 ---
 
@@ -656,11 +674,11 @@ curl -H "Authorization: Bearer $JWT" \
 | Tutorial | 本實作 | 為何安全 |
 |----------|--------|----------|
 | Java 23 | Java 25 | 超集；使用的語言特性完全相同 |
-| PostgreSQL + JPA + Redis + Testcontainers | 記憶體 Adapter | 它們實作相同的 `Load*Port` / `SavePrivilegePort`；換成 `*JpaAdapter` 不需改核心 |
+| PostgreSQL + JPA + Flyway + Testcontainers | **已實作**（JPA Adapter、Flyway schema、Testcontainers 測試） | 與 Tutorial 一致 |
 | Spring Security + JWT（RS256）| **Spring Security OAuth2 Resource Server（HS256）** | 已實作真實 JWT 驗證；正式版改用 RS256 即可 |
-| Cucumber BDD（Testcontainers／WireMock 版） | **Cucumber + 記憶體資料源**（見 §12） | 已實作 27 個端對端情境；以記憶體取代真實容器 |
+| Cucumber BDD（Testcontainers／WireMock 版） | **Cucumber + Testcontainers PostgreSQL**（見 §12） | 已實作 27 個端對端情境，跑在真實資料庫上 |
 | 僅讀取側 | 讀取側 + **一個寫入命令**（見 §13） | 補齊 Command／Event，成為更完整的 DDD 示範 |
-| WireMock、Micrometer、OpenAPI | 暫未納入 | 屬 Sprint-5 範圍，不在此切片內 |
+| Redis 快取、WireMock（Core Banking）、Micrometer、OpenAPI | 暫未納入 | 屬後續 Sprint 範圍 |
 
 完整的設計理由（包含三個被否決的讀取側方案與各項 ADR）收錄於 [`banking-api-tutorial-v2.md`](banking-api-tutorial-v2.md)。
 

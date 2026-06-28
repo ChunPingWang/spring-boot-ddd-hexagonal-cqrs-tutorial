@@ -112,4 +112,9 @@ public class TransferPrivilege {
     public int getUsedQuota()           { return usedQuota; }
     public DateRange getValidPeriod()   { return validPeriod; }
     public PrivilegeType getType()      { return type; }
+
+    /** 供持久化映射使用（以 Aggregate Root 為單位儲存整個邊界內資料）。 */
+    public List<PrivilegeUsageRecord> getUsageRecords() {
+        return List.copyOf(usageRecords);
+    }
 }
